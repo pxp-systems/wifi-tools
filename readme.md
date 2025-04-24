@@ -11,33 +11,47 @@ This project automates guest Wi-Fi password rotation for your Huawei WiFi AX3 ro
 
 ### 1. Clone and Setup
 ```bash
-git clone <your-repo-url>
-cd wifi-automation
-python3 -m venv venv
+git clone https://github.com/pxp-systems/wifi-tools.git
+cd wifi-tools
+```
+
+### 2. Configure Secrets
+Create a `.env` file in the project root:
+```
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+TELEGRAM_CHAT_IDS=7370373994,1234567890
+ROUTER_PASSWORD=your-router-password
+ROUTER_URL=http://192.168.3.1
+```
+Do **not** commit `.env` to git!
+
+### 3. Automated Pi Configuration
+Run the setup script to install dependencies, set up the virtual environment, install Playwright browsers, configure systemd, and reboot:
+```bash
+chmod +x setup_pi.sh
+./setup_pi.sh
+```
+
+After reboot, the reset listener will run automatically at startup.
+
+---
+
+### (Manual) Run the Batch Process
+```bash
 source venv/bin/activate
-pip install -r requirements.txt
-### 3. Playwright and requests
-pip install --upgrade pip
-pip install playwright requests
-playwright install
+python batch.py
+```
 
+### (Manual) Run the Reset Listener
+```bash
+source venv/bin/activate
+python reset_listener.py
+```
+This will listen for `/reset` commands on Telegram and rotate the guest Wi-Fi password when triggered.
 
-### 4 install script
-nano ~/run-wifi.sh
+### (Manual) Systemd Setup
 
-paste this
-#!/bin/bash
-source ~/wifi-env/bin/activate
-python ~/wifi.py --watch
-
-### Make executable and test
-chmod +x ~/run-wifi.sh
-
-./run-wifi.sh
-
-### 5. Run at Boot with systemd
-
-Create a service file:
+If you want to set up systemd manually instead of using the script, create a service file:
 
 ```bash
 sudo nano /etc/systemd/system/wifi-bot.service

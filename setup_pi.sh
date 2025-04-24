@@ -1,0 +1,42 @@
+#!/bin/bash
+set -e
+
+# 1. Update and upgrade system packages
+echo "Updating system packages..."
+sudo apt update && sudo apt upgrade -y
+
+# 2. Install Python 3, venv, pip, git if not present
+echo "Installing Python3, venv, pip, git..."
+sudo apt install -y python3 python3-venv python3-pip git
+
+# 3. Create and activate Python virtual environment
+if [ ! -d "venv" ]; then
+    echo "Creating Python virtual environment..."
+    python3 -m venv venv
+fi
+source venv/bin/activate
+
+# 4. Install Python dependencies
+echo "Installing Python dependencies..."
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# 5. Install Playwright browsers
+echo "Installing Playwright browsers..."
+playwright install
+
+# 6. Create systemd service for the reset listener
+echo "Setting up systemd service..."
+SERVICE_FILE="/etc/systemd/system/wifi-bot.service"
+SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nExecStart=$(pwd)/venv/bin/python $(pwd)/reset_listener.py\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
+echo -e "$SERVICE_CONTENT" | sudo tee $SERVICE_FILE
+
+sudo systemctl daemon-reload
+sudo systemctl enable wifi-bot.service
+sudo systemctl restart wifi-bot.service
+
+echo "Setup complete. The wifi-bot service is running and will start on boot."
+
+echo "Rebooting in 5 seconds... Press Ctrl+C to cancel."
+sleep 5
+sudo reboot
