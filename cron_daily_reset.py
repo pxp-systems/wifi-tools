@@ -1,21 +1,18 @@
-import time
-from datetime import datetime
-import requests
+import sys
 import os
-from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
+from datetime import datetime
 from wifi_utils import generate_password, send_telegram_message
-import json
+from playwright.sync_api import sync_playwright
+from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ALLOWED_CHAT_IDS = set(os.getenv("TELEGRAM_CHAT_IDS", "").split(","))
 ROUTER_PASSWORD = os.getenv("ROUTER_PASSWORD")
 ROUTER_URL = os.getenv("ROUTER_URL", "http://192.168.3.1")
 
+
 def log(msg):
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
+    print(f"[cron_daily_reset {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
 
 def run_browser_automation(new_password):
     try:
@@ -69,47 +66,15 @@ def run_browser_automation(new_password):
         log(f"❌ Error during password update: {e}")
         return False
 
-def check_for_reset_command():
-    token = TELEGRAM_BOT_TOKEN
-    allowed_chat_ids = ALLOWED_CHAT_IDS
-    base_url = f"https://api.telegram.org/bot{token}/getUpdates"
-    last_update_id = 0
-    last_reset_time = 0
+def main():
+    log("Starting daily Wi-Fi reset cron job...")
+    new_password = generate_password()
+    success = run_browser_automation(new_password)
+    if success:
+        send_telegram_message(new_password)
+        log("✅ Wi-Fi password reset and notification sent.")
+    else:
+        log("❌ Failed to reset Wi-Fi password.")
 
-    while True:
-        try:
-            params = {"offset": last_update_id + 1, "timeout": 30}
-            response = requests.get(base_url, params=params, timeout=35)
-            data = response.json()
-
-            updates = data.get("result", [])
-            if updates:
-                log(f"🔍 Found {len(updates)} update(s)")
-            for update in updates:
-                log(f"Received update: {json.dumps(update)}")
-                update_id = update.get("update_id")
-                message = update.get("message", {})
-                text = message.get("text", "").strip().lower()
-                chat_id = str(message.get("chat", {}).get("id"))
-                log(f"Checking chat_id={chat_id}, text='{text}'")
-
-                if chat_id in allowed_chat_ids and text == "/reset":
-                    now = time.time()
-                    if now - last_reset_time >= 60:
-                        log(f"🔁 Reset triggered")
-                        new_password = generate_password()
-                        success = run_browser_automation(new_password)
-                        if success:
-                            send_telegram_message(new_password)
-                            last_reset_time = now
-                    else:
-                        log(f"⏳ Ignored duplicate reset, last was {int(now - last_reset_time)}s ago")
-
-            if updates:
-                last_update_id = updates[-1].get("update_id", last_update_id)
-
-        except Exception as e:
-            log(f"❌ Telegram polling error: {e}")
-
-if __name__ == '__main__':
-    check_for_reset_command()
+if __name__ == "__main__":
+    main()
