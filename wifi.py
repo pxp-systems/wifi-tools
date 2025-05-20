@@ -5,6 +5,9 @@ import requests
 import time
 from datetime import datetime
 import sys
+import os
+
+LAST_UPDATE_ID_FILE = "/home/admin/.last_telegram_update"
 
 def send_telegram_message(password):
     token = "7767217949:AAFIYBNDNEV4E7lZpVZSAkl_r2A8CRyQVnc"
@@ -87,12 +90,27 @@ def run():
     if success:
         send_telegram_message(new_password)
 
+def load_last_update_id():
+    if os.path.exists(LAST_UPDATE_ID_FILE):
+        with open(LAST_UPDATE_ID_FILE, "r") as f:
+            try:
+                return int(f.read().strip())
+            except:
+                return 0
+    return 0
+
+def save_last_update_id(update_id):
+    with open(LAST_UPDATE_ID_FILE, "w") as f:
+        f.write(str(update_id))
+
 def check_for_reset_command():
     token = "7767217949:AAFIYBNDNEV4E7lZpVZSAkl_r2A8CRyQVnc"
     allowed_chat_ids = {"7370373994", "1234567890"}
     base_url = f"https://api.telegram.org/bot{token}/getUpdates"
-    last_update_id = 0
+    last_update_id = load_last_update_id()
     last_reset_time = 0
+
+    print("📡 Bot is now watching for /reset commands...")
 
     while True:
         try:
@@ -102,15 +120,23 @@ def check_for_reset_command():
 
             updates = data.get("result", [])
             if updates:
-                print(f"🔍 Found {len(updates)} update(s)")
+                print(f"🔍 {len(updates)} new update(s) received")
+
             for update in updates:
                 update_id = update["update_id"]
                 message = update.get("message", {})
                 text = message.get("text", "").strip().lower()
                 chat_id = str(message.get("chat", {}).get("id"))
 
+                print(f"📨 Message from {chat_id}: '{text}' (update_id {update_id})")
+
+                if update_id <= last_update_id:
+                    print("⚠️ Skipping already processed update.")
+                    continue
+
                 if chat_id in allowed_chat_ids and text == "/reset":
                     now = time.time()
+                    cooldown_remaining = int(60 - (now - last_reset_time))
                     if now - last_reset_time >= 60:
                         print(f"🔁 Reset triggered at {datetime.now().strftime('%H:%M:%S')}")
                         new_password = generate_password()
@@ -118,11 +144,16 @@ def check_for_reset_command():
                         if success:
                             send_telegram_message(new_password)
                             last_reset_time = now
+                            print(f"✅ Reset complete and message sent at {datetime.now().strftime('%H:%M:%S')}")
+                        else:
+                            print(f"❌ Reset failed at {datetime.now().strftime('%H:%M:%S')}")
                     else:
-                        print(f"⏳ Ignored duplicate reset at {datetime.now().strftime('%H:%M:%S')}, last was {int(now - last_reset_time)}s ago")
+                        print(f"⏳ Reset skipped: {cooldown_remaining}s cooldown remaining")
+                else:
+                    print("🛑 Ignored: not a valid /reset or unauthorized user")
 
-            if updates:
-                last_update_id = updates[-1]["update_id"]
+                last_update_id = update_id
+                save_last_update_id(last_update_id)
 
         except Exception as e:
             print("❌ Telegram polling error:", e)
