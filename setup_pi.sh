@@ -6,8 +6,8 @@ echo "Updating system packages..."
 sudo apt update && sudo apt upgrade -y
 
 # 2. Install Python 3, venv, pip, git if not present
-echo "Installing Python3, venv, pip, git..."
-sudo apt install -y python3 python3-venv python3-pip git
+echo "Installing Python3, venv, pip, git, xvfb..."
+sudo apt install -y python3 python3-venv python3-pip git xvfb
 
 # 3. Create and activate Python virtual environment
 VENV_DIR="venv"
@@ -34,7 +34,7 @@ SERVICE_FILE="/etc/systemd/system/wifi-bot.service"
 STATE_DIR="/var/lib/wifi-automation"
 sudo mkdir -p "$STATE_DIR"
 sudo chown "$(whoami)":"$(whoami)" "$STATE_DIR"
-SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nEnvironmentFile=-$(pwd)/.env\nEnvironment=STATE_DIR=$STATE_DIR\nExecStart=$(pwd)/$VENV_BIN/python $(pwd)/wifi.py --watch\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
+SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nEnvironmentFile=-$(pwd)/.env\nEnvironment=STATE_DIR=$STATE_DIR\nExecStart=/usr/bin/xvfb-run --auto-servernum --server-args=\\\"-screen 0 1280x800x24\\\" $(pwd)/$VENV_BIN/python $(pwd)/wifi.py --watch\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
 echo -e "$SERVICE_CONTENT" | sudo tee $SERVICE_FILE
 
 sudo systemctl daemon-reload
