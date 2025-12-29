@@ -10,11 +10,14 @@ echo "Installing Python3, venv, pip, git..."
 sudo apt install -y python3 python3-venv python3-pip git
 
 # 3. Create and activate Python virtual environment
-if [ ! -d "venv" ]; then
+VENV_DIR="venv"
+VENV_BIN="$VENV_DIR/bin"
+
+if [ ! -d "$VENV_DIR" ]; then
     echo "Creating Python virtual environment..."
-    python3 -m venv venv
+    python3 -m venv "$VENV_DIR"
 fi
-source venv/bin/activate
+source "$VENV_BIN/activate"
 
 # 4. Install Python dependencies
 echo "Installing Python dependencies..."
@@ -23,12 +26,12 @@ pip install -r requirements.txt
 
 # 5. Install Playwright browsers
 echo "Installing Playwright browsers..."
-playwright install
+"$VENV_BIN/python" -m playwright install chromium
 
 # 6. Create systemd service for the reset listener
 echo "Setting up systemd service..."
 SERVICE_FILE="/etc/systemd/system/wifi-bot.service"
-SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nExecStart=$(pwd)/venv/bin/python $(pwd)/reset_listener.py\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
+SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nEnvironmentFile=-$(pwd)/.env\nExecStart=$(pwd)/$VENV_BIN/python $(pwd)/wifi.py --watch\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
 echo -e "$SERVICE_CONTENT" | sudo tee $SERVICE_FILE
 
 sudo systemctl daemon-reload
@@ -38,7 +41,7 @@ sudo systemctl restart wifi-bot.service
 echo "Setup complete. The wifi-bot service is running and will start on boot."
 
 # 7. Add daily cron job for Wi-Fi reset at 7:30am
-CRONLINE="30 7 * * * cd $(pwd) && $(pwd)/venv/bin/python $(pwd)/cron_daily_reset.py >> $(pwd)/cron_daily_reset.log 2>&1"
+CRONLINE="30 7 * * * cd $(pwd) && $(pwd)/$VENV_BIN/python $(pwd)/cron_daily_reset.py >> $(pwd)/cron_daily_reset.log 2>&1"
 # Remove any existing line for cron_daily_reset.py to avoid duplicates
 (crontab -l | grep -v 'cron_daily_reset.py'; echo "$CRONLINE") | crontab -
 echo "Daily cron job added: $CRONLINE"

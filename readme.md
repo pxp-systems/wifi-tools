@@ -1,11 +1,6 @@
 # Raspberry Pi 5 — Automated Guest Wi-Fi Password Updater
 
-This project automates guest Wi-Fi password rotation for your Huawei WiFi AX3 router and sends the new password to you via Telegram. It now features:
-- **Secrets managed via a `.env` file** (never committed to git)
-- **Split scripts:**
-  - `batch.py`: Rotates the password and sends it via Telegram
-  - `reset_listener.py`: Listens for Telegram `/reset` commands to trigger a password reset
-- **Shared helpers in `wifi_utils.py`**
+This project automates guest Wi-Fi password rotation (Playwright) and sends the new password to you via Telegram. The primary entrypoint is `wifi.py`; other scripts simply delegate to it for cron/systemd use.
 
 ## 🚀 Quick Start
 
@@ -19,9 +14,10 @@ cd wifi-tools
 Create a `.env` file in the project root:
 ```
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
-TELEGRAM_CHAT_IDS=7370373994,1234567890
-ROUTER_PASSWORD=your-router-password
-ROUTER_URL=http://192.168.3.1
+TELEGRAM_CHAT_IDS=7370373994,1234567890   # comma-separated
+ROUTER_PASSWORD=your-router-password      # required
+ROUTER_URL=https://orbilogin.com          # or your router URL
+HEADLESS=true
 ```
 Do **not** commit `.env` to git!
 
@@ -36,18 +32,17 @@ After reboot, the reset listener will run automatically at startup.
 
 ---
 
-### (Manual) Run the Batch Process
+### (Manual) Run Once
 ```bash
 source venv/bin/activate
-python batch.py
+python wifi.py
 ```
 
-### (Manual) Run the Reset Listener
+### (Manual) Run the Reset Listener (Telegram `/reset`)
 ```bash
 source venv/bin/activate
-python reset_listener.py
+python wifi.py --watch
 ```
-This will listen for `/reset` commands on Telegram and rotate the guest Wi-Fi password when triggered.
 
 ### (Manual) Systemd Setup
 
