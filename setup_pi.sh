@@ -31,7 +31,10 @@ echo "Installing Playwright browsers..."
 # 6. Create systemd service for the reset listener
 echo "Setting up systemd service..."
 SERVICE_FILE="/etc/systemd/system/wifi-bot.service"
-SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nEnvironmentFile=-$(pwd)/.env\nExecStart=$(pwd)/$VENV_BIN/python $(pwd)/wifi.py --watch\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
+STATE_DIR="/var/lib/wifi-automation"
+sudo mkdir -p "$STATE_DIR"
+sudo chown "$(whoami)":"$(whoami)" "$STATE_DIR"
+SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nEnvironmentFile=-$(pwd)/.env\nEnvironment=STATE_DIR=$STATE_DIR\nExecStart=$(pwd)/$VENV_BIN/python $(pwd)/wifi.py --watch\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
 echo -e "$SERVICE_CONTENT" | sudo tee $SERVICE_FILE
 
 sudo systemctl daemon-reload

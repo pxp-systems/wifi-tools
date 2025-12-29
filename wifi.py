@@ -17,6 +17,7 @@ import random
 import string
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -57,8 +58,11 @@ HEADLESS = os.getenv("HEADLESS", "true").lower() in {"1", "true", "yes"}
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_IDS = [c.strip() for c in os.getenv("TELEGRAM_CHAT_IDS", "").split(",") if c.strip()]
 
-# Where we persist the last Telegram update id
-LAST_UPDATE_ID_FILE = os.getenv("LAST_UPDATE_ID_FILE", "/home/admin/.last_telegram_update")
+# State directory and update id tracking
+STATE_DIR = Path(os.getenv("STATE_DIR", os.path.expanduser("~/.wifi-automation")))
+LAST_UPDATE_ID_FILE = Path(
+    os.path.expanduser(os.getenv("LAST_UPDATE_ID_FILE", str(STATE_DIR / "last_telegram_update")))
+)
 
 # Password policy
 PASSWORD_MODE = os.getenv("PASSWORD_MODE", "digits")  # digits | prefix+digits
@@ -238,7 +242,7 @@ def run_once() -> None:
 
 def load_last_update_id() -> int:
     try:
-        if os.path.exists(LAST_UPDATE_ID_FILE):
+        if LAST_UPDATE_ID_FILE.exists():
             with open(LAST_UPDATE_ID_FILE, "r") as f:
                 return int((f.read() or "0").strip())
     except Exception:
@@ -248,9 +252,7 @@ def load_last_update_id() -> int:
 
 def save_last_update_id(update_id: int) -> None:
     try:
-        parent = os.path.dirname(LAST_UPDATE_ID_FILE)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
+        LAST_UPDATE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
 
@@ -271,7 +273,7 @@ def check_for_reset_command() -> None:
     last_update_id = load_last_update_id()
     last_reset_time = 0.0
 
-    print("📡 Watching Telegram for /reset ...")
+    print(f"📡 Watching Telegram for /reset ... (state: {LAST_UPDATE_ID_FILE}, chats: {allowed_chat_ids})")
 
     while True:
         try:

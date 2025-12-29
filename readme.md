@@ -18,6 +18,7 @@ TELEGRAM_CHAT_IDS=7370373994,1234567890   # comma-separated
 ROUTER_PASSWORD=your-router-password      # required
 ROUTER_URL=https://orbilogin.com          # or your router URL
 HEADLESS=true
+LAST_UPDATE_ID_FILE=~/.wifi-automation/last_telegram_update  # optional override
 ```
 Do **not** commit `.env` to git!
 
