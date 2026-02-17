@@ -17,9 +17,11 @@ TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 TELEGRAM_CHAT_IDS=7370373994,1234567890   # comma-separated
 ROUTER_PASSWORD=your-router-password      # required
 ROUTER_URL=https://orbilogin.com          # or your router URL
+GUEST_SSID_SELECTOR=#ssid                  # optional: defaults to #ssid
 HEADLESS=true
 LAST_UPDATE_ID_FILE=~/.wifi-automation/last_telegram_update  # optional override
 ```
+Guest SSID is automatically generated each run as `AG-DDMMYYhhmm`.
 Do **not** commit `.env` to git!
 
 ### 3. Automated Pi Configuration

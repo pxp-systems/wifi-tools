@@ -46,6 +46,7 @@ LOGIN_PASSWORD_SELECTOR = os.getenv("LOGIN_PASSWORD_SELECTOR", "#sysPasswd")
 LOGIN_BUTTON_SELECTOR = os.getenv("LOGIN_BUTTON_SELECTOR", 'button:has-text("Login")')
 
 GUEST_MENU_SELECTOR = os.getenv("GUEST_MENU_SELECTOR", 'a:has-text("Guest Network")')
+GUEST_SSID_SELECTOR = os.getenv("GUEST_SSID_SELECTOR", "#ssid")
 GUEST_PASSWORD_SELECTOR = os.getenv("GUEST_PASSWORD_SELECTOR", "#passphrase")
 SAVE_BUTTON_SELECTOR = os.getenv("SAVE_BUTTON_SELECTOR", 'button:has-text("Apply")')
 
@@ -110,6 +111,10 @@ def generate_password() -> str:
     return prefix + digits
 
 
+def generate_network_name() -> str:
+    return datetime.now().strftime("AG-%d%m%y%H%M")
+
+
 def _accept_tls_interstitial(page) -> None:
     """
     Click through Chromium 'Your connection is not private' interstitial.
@@ -142,8 +147,10 @@ def _accept_tls_interstitial(page) -> None:
         pass
 
 
-def run_browser_automation(new_password: str) -> bool:
+def run_browser_automation(new_password: str, new_ssid: Optional[str] = None) -> bool:
     admin_password = _require_env("ROUTER_PASSWORD", ROUTER_ADMIN_PASSWORD)
+    if new_ssid is None:
+        new_ssid = generate_network_name()
 
     browser = None
     context = None
@@ -196,11 +203,9 @@ def run_browser_automation(new_password: str) -> bool:
             page.locator(GUEST_MENU_SELECTOR).first.click(timeout=30000)
             page.wait_for_timeout(1500)
 
-            # Update guest password (inside iframe on Orbi)
+            # Update guest network settings (inside iframe on Orbi)
             frame = page.frame_locator(GUEST_IFRAME_SELECTOR)
-            frame.locator(GUEST_PASSWORD_SELECTOR).wait_for(timeout=30000)
-            frame.locator(GUEST_PASSWORD_SELECTOR).fill(new_password)
-            frame.locator(SAVE_BUTTON_SELECTOR).click(timeout=120000)
+            _update_guest_network(frame, new_password, new_ssid)
 
             page.wait_for_timeout(60000)
 
@@ -233,9 +238,19 @@ def run_browser_automation(new_password: str) -> bool:
         return False
 
 
+def _update_guest_network(frame, new_password: str, new_ssid: str) -> None:
+    frame.locator(GUEST_SSID_SELECTOR).wait_for(timeout=30000)
+    frame.locator(GUEST_SSID_SELECTOR).fill(new_ssid)
+
+    frame.locator(GUEST_PASSWORD_SELECTOR).wait_for(timeout=30000)
+    frame.locator(GUEST_PASSWORD_SELECTOR).fill(new_password)
+    frame.locator(SAVE_BUTTON_SELECTOR).click(timeout=120000)
+
+
 def run_once() -> None:
     new_password = generate_password()
-    success = run_browser_automation(new_password)
+    new_ssid = generate_network_name()
+    success = run_browser_automation(new_password, new_ssid)
     if success:
         send_telegram_message(new_password)
 
@@ -295,7 +310,8 @@ def check_for_reset_command() -> None:
                     now = time.time()
                     if now - last_reset_time >= RESET_COOLDOWN_SECONDS:
                         pw = generate_password()
-                        if run_browser_automation(pw):
+                        ssid = generate_network_name()
+                        if run_browser_automation(pw, ssid):
                             send_telegram_message(pw)
                             last_reset_time = now
                     else:
