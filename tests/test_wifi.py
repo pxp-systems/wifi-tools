@@ -39,9 +39,13 @@ class UpdateGuestNetworkTests(unittest.TestCase):
         wifi._update_guest_network(frame, "98765", "AG-1702262040")
 
         ssid_field.wait_for.assert_called_once_with(timeout=30000)
-        ssid_field.fill.assert_called_once_with("AG-1702262040")
+        ssid_field.click.assert_called_once_with(timeout=10000)
+        ssid_field.press.assert_called_once_with("ControlOrMeta+a")
+        ssid_field.type.assert_called_once_with("AG-1702262040")
         password_field.wait_for.assert_called_once_with(timeout=30000)
-        password_field.fill.assert_called_once_with("98765")
+        password_field.click.assert_called_once_with(timeout=10000)
+        password_field.press.assert_called_once_with("ControlOrMeta+a")
+        password_field.type.assert_called_once_with("98765")
         save_button.click.assert_called_once_with(timeout=120000)
 
     def test_generate_network_name_matches_pattern_ag_ddmmyyhhmm(self):

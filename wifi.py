@@ -239,12 +239,20 @@ def run_browser_automation(new_password: str, new_ssid: Optional[str] = None) ->
 
 
 def _update_guest_network(frame, new_password: str, new_ssid: str) -> None:
-    frame.locator(GUEST_SSID_SELECTOR).wait_for(timeout=30000)
-    frame.locator(GUEST_SSID_SELECTOR).fill(new_ssid)
+    ssid_locator = frame.locator(GUEST_SSID_SELECTOR)
+    ssid_locator.wait_for(timeout=30000)
+    _select_all_and_overtype(ssid_locator, new_ssid)
 
-    frame.locator(GUEST_PASSWORD_SELECTOR).wait_for(timeout=30000)
-    frame.locator(GUEST_PASSWORD_SELECTOR).fill(new_password)
+    password_locator = frame.locator(GUEST_PASSWORD_SELECTOR)
+    password_locator.wait_for(timeout=30000)
+    _select_all_and_overtype(password_locator, new_password)
     frame.locator(SAVE_BUTTON_SELECTOR).click(timeout=120000)
+
+
+def _select_all_and_overtype(locator, value: str) -> None:
+    locator.click(timeout=10000)
+    locator.press("ControlOrMeta+a")
+    locator.type(value)
 
 
 def run_once() -> None:
