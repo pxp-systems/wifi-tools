@@ -36,8 +36,26 @@ SERVICE_FILE="/etc/systemd/system/wifi-bot.service"
 STATE_DIR="/var/lib/wifi-automation"
 sudo mkdir -p "$STATE_DIR"
 sudo chown "$(whoami)":"$(whoami)" "$STATE_DIR"
-SERVICE_CONTENT="[Unit]\nDescription=WiFi Auto-Rotator Bot\nAfter=network-online.target\n\n[Service]\nEnvironmentFile=-$(pwd)/.env\nEnvironment=STATE_DIR=$STATE_DIR\nExecStart=/usr/bin/xvfb-run --auto-servernum --server-args=\\\"-screen 0 1280x800x24\\\" $(pwd)/$VENV_BIN/python $(pwd)/wifi.py --watch\nWorkingDirectory=$(pwd)\nStandardOutput=append:$(pwd)/wifi.log\nStandardError=append:$(pwd)/wifi.log\nRestart=always\nUser=$(whoami)\n\n[Install]\nWantedBy=multi-user.target\n"
-echo -e "$SERVICE_CONTENT" | sudo tee $SERVICE_FILE
+REPO_DIR="$(pwd)"
+CURRENT_USER="$(whoami)"
+sudo tee "$SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=WiFi Auto-Rotator Bot
+After=network-online.target
+
+[Service]
+EnvironmentFile=-$REPO_DIR/.env
+Environment=STATE_DIR=$STATE_DIR
+ExecStart=/usr/bin/xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" $REPO_DIR/$VENV_BIN/python $REPO_DIR/wifi.py --watch
+WorkingDirectory=$REPO_DIR
+StandardOutput=append:$REPO_DIR/wifi.log
+StandardError=append:$REPO_DIR/wifi.log
+Restart=always
+User=$CURRENT_USER
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable wifi-bot.service
