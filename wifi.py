@@ -16,6 +16,7 @@ import time
 import random
 import string
 import re
+import fcntl
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -64,6 +65,9 @@ STATE_DIR = Path(os.getenv("STATE_DIR", os.path.expanduser("~/.wifi-automation")
 LAST_UPDATE_ID_FILE = Path(
     os.path.expanduser(os.getenv("LAST_UPDATE_ID_FILE", str(STATE_DIR / "last_telegram_update")))
 )
+WATCH_LOCK_FILE = Path(os.getenv("WATCH_LOCK_FILE", "/tmp/wifi-automation-reset.lock"))
+
+_WATCH_LOCK_HANDLE = None
 
 # Password policy
 PASSWORD_MODE = os.getenv("PASSWORD_MODE", "digits")  # digits | prefix+digits
@@ -253,6 +257,30 @@ def _select_all_and_overtype(locator, value: str) -> None:
     locator.click(timeout=10000)
     locator.press("ControlOrMeta+a")
     locator.type(value)
+    # Some router UIs under headless/Xvfb occasionally ignore Ctrl/Cmd+A.
+    # Verify the typed value and force fill if needed.
+    try:
+        if locator.input_value() != value:
+            locator.fill(value)
+    except Exception:
+        locator.fill(value)
+
+
+def _acquire_watch_lock() -> None:
+    global _WATCH_LOCK_HANDLE
+    WATCH_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(WATCH_LOCK_FILE, "w")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        raise RuntimeError(f"Another reset watcher is already running (lock: {WATCH_LOCK_FILE})")
+
+    handle.seek(0)
+    handle.truncate(0)
+    handle.write(str(os.getpid()))
+    handle.flush()
+    _WATCH_LOCK_HANDLE = handle
 
 
 def run_once() -> None:
@@ -287,6 +315,8 @@ def save_last_update_id(update_id: int) -> None:
 
 
 def check_for_reset_command() -> None:
+    _acquire_watch_lock()
+
     token = _require_env("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN)
     allowed_chat_ids = set(TELEGRAM_CHAT_IDS)
     if not allowed_chat_ids:

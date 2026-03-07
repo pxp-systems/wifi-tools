@@ -1,5 +1,7 @@
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import wifi
@@ -55,6 +57,28 @@ class UpdateGuestNetworkTests(unittest.TestCase):
 
         self.assertRegex(name, r"^AG-\d{10}$")
         self.assertTrue(re.match(r"^AG-\d{10}$", name))
+
+
+class WatcherLockTests(unittest.TestCase):
+    def setUp(self):
+        self.original_watch_lock_file = wifi.WATCH_LOCK_FILE
+        self.original_watch_lock_handle = wifi._WATCH_LOCK_HANDLE
+
+    def tearDown(self):
+        if wifi._WATCH_LOCK_HANDLE is not None:
+            wifi._WATCH_LOCK_HANDLE.close()
+        wifi._WATCH_LOCK_HANDLE = self.original_watch_lock_handle
+        wifi.WATCH_LOCK_FILE = self.original_watch_lock_file
+
+    def test_acquire_watch_lock_blocks_second_watcher(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            wifi.WATCH_LOCK_FILE = Path(tmp_dir) / "wifi-watch.lock"
+            wifi._WATCH_LOCK_HANDLE = None
+
+            wifi._acquire_watch_lock()
+
+            with self.assertRaises(RuntimeError):
+                wifi._acquire_watch_lock()
 
 
 if __name__ == "__main__":

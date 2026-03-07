@@ -6,8 +6,10 @@ echo "Updating system packages..."
 sudo apt update && sudo apt upgrade -y
 
 # 2. Install Python 3, venv, pip, git if not present
-echo "Installing Python3, venv, pip, git, xvfb..."
-sudo apt install -y python3 python3-venv python3-pip git xvfb
+echo "Installing Python3, venv, pip, git, xvfb, cron..."
+sudo apt install -y python3 python3-venv python3-pip git xvfb cron
+sudo systemctl enable cron
+sudo systemctl restart cron
 
 # 3. Create and activate Python virtual environment
 VENV_DIR="venv"
@@ -46,7 +48,7 @@ echo "Setup complete. The wifi-bot service is running and will start on boot."
 # 7. Add daily cron job for Wi-Fi reset at 7:30am
 CRONLINE="30 7 * * * cd $(pwd) && $(pwd)/$VENV_BIN/python $(pwd)/cron_daily_reset.py >> $(pwd)/cron_daily_reset.log 2>&1"
 # Remove any existing line for cron_daily_reset.py to avoid duplicates
-(crontab -l | grep -v 'cron_daily_reset.py'; echo "$CRONLINE") | crontab -
+(crontab -l 2>/dev/null | grep -v 'cron_daily_reset.py'; echo "$CRONLINE") | crontab -
 echo "Daily cron job added: $CRONLINE"
 
 echo "Rebooting in 5 seconds... Press Ctrl+C to cancel."
