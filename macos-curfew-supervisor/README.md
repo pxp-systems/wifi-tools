@@ -98,6 +98,30 @@ chmod +x scripts/install.sh
 sudo scripts/install.sh /absolute/path/to/macos-curfew-supervisor
 ```
 
+Then, for each standard user (run as that user, not root):
+
+```bash
+PROJECT_ROOT=/absolute/path/to/macos-curfew-supervisor
+PYTHON_BIN="$(command -v python3.11 || command -v python3)"
+AGENT_DST="$HOME/Library/LaunchAgents/com.example.curfewsupervisor.agent.plist"
+
+mkdir -p "$HOME/Library/LaunchAgents"
+sed -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" -e "s|__PYTHON_BIN__|$PYTHON_BIN|g" \
+  "$PROJECT_ROOT/launchd/com.example.curfewsupervisor.agent.plist" > "$AGENT_DST"
+
+launchctl bootout gui/$(id -u) com.example.curfewsupervisor.agent >/dev/null 2>&1 || true
+launchctl bootstrap gui/$(id -u) "$AGENT_DST"
+```
+
+## Update after pulling latest changes
+
+```bash
+git pull
+sudo scripts/install.sh /absolute/path/to/macos-curfew-supervisor
+```
+
+Re-run the agent install block above for each standard user.
+
 Uninstall:
 
 ```bash
