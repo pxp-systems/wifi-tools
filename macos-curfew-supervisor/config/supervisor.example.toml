@@ -1,0 +1,17 @@
+timezone = "Pacific/Auckland"
+base_deadline = "22:30"
+warning_offsets_minutes = [15, 10, 2]
+extension_minutes = 30
+relogin_grace_seconds = 60
+loop_interval_seconds = 20
+web_host = "127.0.0.1"
+web_port = 8765
+max_override_attempts_per_10_min = 5
+
+db_path = "/var/db/macos-curfew-supervisor/state.db"
+log_path = "/var/log/macos-curfew-supervisor/daemon.log"
+warning_drop_dir = "/var/run/macos-curfew-supervisor/warnings"
+secret_file = "/etc/macos-curfew-supervisor/secret.key"
+
+telegram_bot_token = ""
+telegram_chat_ids = ["123456789"]
