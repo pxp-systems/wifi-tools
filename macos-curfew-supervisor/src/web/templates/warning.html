@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Curfew Warning</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Curfew Warning</h1>
+    <p>This account (<strong id="user">{{ username }}</strong>) will be logged out at <strong id="deadline">{{ deadline }}</strong>.</p>
+    <p>Enter override code to add 30 minutes.</p>
+
+    <div class="countdown-wrap">
+      <div class="label">Time remaining</div>
+      <div id="countdown" class="countdown">--:--</div>
+    </div>
+
+    <form id="override-form">
+      <input id="code" name="code" type="text" maxlength="8" autocomplete="off" placeholder="Enter code" required />
+      <button type="submit">Submit override</button>
+    </form>
+
+    <p id="status" class="status"></p>
+  </main>
+
+  <script>
+    window.CURFEW_CONTEXT = {
+      token: "{{ token }}",
+      deadline: "{{ deadline }}"
+    };
+  </script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
