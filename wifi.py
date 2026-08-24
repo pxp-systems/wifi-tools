@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-wifi.py — Guest Wi-Fi password rotator + Telegram notifier (Netgear Orbi)
+wifi.py — Guest Wi-Fi password rotator + downtime scheduler + Telegram notifier (Netgear Orbi)
 
 - Generates a password (digits-only or prefix+digits)
 - Uses Playwright to log into Orbi and update Guest Network passphrase
+- Turns the Guest Network off/on automatically on a downtime schedule
 - Sends the new password to Telegram
 - Optional: polls Telegram for /reset (cooldown enforced)
 
@@ -17,9 +18,9 @@ import random
 import string
 import re
 import fcntl
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, Set
 
 import requests
 from playwright.sync_api import sync_playwright
@@ -51,8 +52,15 @@ GUEST_SSID_SELECTOR = os.getenv("GUEST_SSID_SELECTOR", "#ssid")
 GUEST_PASSWORD_SELECTOR = os.getenv("GUEST_PASSWORD_SELECTOR", "#passphrase")
 SAVE_BUTTON_SELECTOR = os.getenv("SAVE_BUTTON_SELECTOR", 'button:has-text("Apply")')
 
+# "Enable Guest Network" checkbox — used by the downtime scheduler.
+# Confirm this one with `playwright codegen` against your own firmware.
+GUEST_ENABLE_SELECTOR = os.getenv("GUEST_ENABLE_SELECTOR", "#enable_guest")
+
 # If Orbi UI is inside an iframe (your codegen shows #page)
 GUEST_IFRAME_SELECTOR = os.getenv("GUEST_IFRAME_SELECTOR", "#page")
+
+# How long to sit on the page after Apply (Orbi restarts the guest radio)
+GUEST_APPLY_WAIT_MS = int(os.getenv("GUEST_APPLY_WAIT_MS", "60000"))
 
 HEADLESS = os.getenv("HEADLESS", "true").lower() in {"1", "true", "yes"}
 
@@ -79,6 +87,20 @@ PASSWORD_DIGITS_ONLY_LEN = int(os.getenv("PASSWORD_DIGITS_ONLY_LEN", "5"))
 # Reset command cooldown
 RESET_COOLDOWN_SECONDS = int(os.getenv("RESET_COOLDOWN_SECONDS", "60"))
 
+# Downtime schedule (local time). While inside the window the guest network is
+# switched off; outside it, back on.
+DOWNTIME_ENABLED = os.getenv("DOWNTIME_ENABLED", "false").lower() in {"1", "true", "yes"}
+DOWNTIME_START = os.getenv("DOWNTIME_START", "22:30")
+DOWNTIME_END = os.getenv("DOWNTIME_END", "06:30")
+# all | weekdays | weekends | comma-separated day names (mon,tue,...)
+DOWNTIME_DAYS = os.getenv("DOWNTIME_DAYS", "all")
+DOWNTIME_NOTIFY = os.getenv("DOWNTIME_NOTIFY", "true").lower() in {"1", "true", "yes"}
+GUEST_STATE_FILE = Path(
+    os.path.expanduser(os.getenv("GUEST_STATE_FILE", str(STATE_DIR / "guest_state")))
+)
+
+_DAY_NAMES = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
 
 def _require_env(name: str, value: Optional[str]) -> str:
     if not value:
@@ -86,16 +108,15 @@ def _require_env(name: str, value: Optional[str]) -> str:
     return value
 
 
-def send_telegram_message(password: str) -> None:
+def send_telegram_text(text: str) -> None:
     token = _require_env("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN)
     if not TELEGRAM_CHAT_IDS:
         raise RuntimeError("Missing TELEGRAM_CHAT_IDS (comma-separated).")
 
-    message = f"🔐 Guest Wi-Fi password for {datetime.now().strftime('%A %d %B')}:\n\n{password}"
     url = f"https://api.telegram.org/bot{token}/sendMessage"
 
     for chat_id in TELEGRAM_CHAT_IDS:
-        data = {"chat_id": chat_id, "text": message}
+        data = {"chat_id": chat_id, "text": text}
         try:
             r = requests.post(url, data=data, timeout=20)
             if r.status_code == 200:
@@ -104,6 +125,11 @@ def send_telegram_message(password: str) -> None:
                 print(f"❌ Telegram failed for {chat_id}: {r.text}")
         except Exception as e:
             print(f"❌ Telegram error for {chat_id}: {e}")
+
+
+def send_telegram_message(password: str) -> None:
+    message = f"🔐 Guest Wi-Fi password for {datetime.now().strftime('%A %d %B')}:\n\n{password}"
+    send_telegram_text(message)
 
 
 def generate_password() -> str:
@@ -117,6 +143,161 @@ def generate_password() -> str:
 
 def generate_network_name() -> str:
     return datetime.now().strftime("AG-%d%m%y%H%M")
+
+
+# -----------------------------
+# Downtime schedule
+# -----------------------------
+
+
+def parse_hhmm(value: str) -> dtime:
+    match = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", value or "")
+    if not match:
+        raise ValueError(f"Invalid time (expected HH:MM): {value!r}")
+
+    hour, minute = int(match.group(1)), int(match.group(2))
+    if hour > 23 or minute > 59:
+        raise ValueError(f"Invalid time (expected HH:MM): {value!r}")
+
+    return dtime(hour, minute)
+
+
+def parse_days(value: str) -> Set[int]:
+    """Return weekday numbers (Mon=0) the downtime window may start on."""
+    raw = (value or "").strip().lower()
+    if raw in {"", "all", "daily", "everyday", "every day"}:
+        return set(range(7))
+    if raw in {"weekdays", "weekday"}:
+        return {0, 1, 2, 3, 4}
+    if raw in {"weekends", "weekend"}:
+        return {5, 6}
+
+    days = set()
+    for token in raw.replace(" ", "").split(","):
+        if not token:
+            continue
+        key = token[:3]
+        if key not in _DAY_NAMES:
+            raise ValueError(f"Unknown day in DOWNTIME_DAYS: {token!r}")
+        days.add(_DAY_NAMES[key])
+
+    if not days:
+        raise ValueError(f"No usable days in DOWNTIME_DAYS: {value!r}")
+    return days
+
+
+def is_downtime(
+    now: Optional[datetime] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    days: Optional[str] = None,
+) -> bool:
+    """True when `now` falls inside the configured downtime window."""
+    now = now or datetime.now()
+    start_t = parse_hhmm(DOWNTIME_START if start is None else start)
+    end_t = parse_hhmm(DOWNTIME_END if end is None else end)
+    active_days = parse_days(DOWNTIME_DAYS if days is None else days)
+
+    if start_t == end_t:
+        # Zero-length window: never down (use DOWNTIME_ENABLED=false instead).
+        return False
+
+    current = now.time()
+
+    if start_t < end_t:
+        # Same-day window, keyed on today's weekday.
+        return now.weekday() in active_days and start_t <= current < end_t
+
+    # Window crosses midnight.
+    if current >= start_t:
+        return now.weekday() in active_days
+    if current < end_t:
+        # Still inside a window that started yesterday.
+        return (now - timedelta(days=1)).weekday() in active_days
+    return False
+
+
+def desired_guest_state(now: Optional[datetime] = None) -> bool:
+    """Guest network state the schedule wants right now (True = on)."""
+    return not is_downtime(now)
+
+
+def load_guest_state() -> Optional[bool]:
+    try:
+        if GUEST_STATE_FILE.exists():
+            with open(GUEST_STATE_FILE, "r") as f:
+                value = (f.read() or "").strip().lower()
+            if value == "on":
+                return True
+            if value == "off":
+                return False
+    except Exception:
+        pass
+    return None
+
+
+def save_guest_state(enabled: bool) -> None:
+    try:
+        GUEST_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    try:
+        with open(GUEST_STATE_FILE, "w") as f:
+            f.write("on" if enabled else "off")
+    except Exception:
+        pass
+
+
+def describe_schedule() -> str:
+    if not DOWNTIME_ENABLED:
+        return "downtime disabled"
+    return f"downtime {DOWNTIME_START}–{DOWNTIME_END} ({DOWNTIME_DAYS})"
+
+
+def apply_schedule(force: bool = False) -> Optional[bool]:
+    """
+    Bring the guest network in line with the downtime schedule.
+
+    Returns the state now believed to be applied (True = on), or None when the
+    schedule is disabled or the router update failed.
+    """
+    if not DOWNTIME_ENABLED:
+        return None
+
+    wanted = desired_guest_state()
+    known = load_guest_state()
+
+    if not force and known == wanted:
+        return wanted
+
+    label = "on" if wanted else "off"
+    print(f"🕒 Schedule: switching guest network {label} ({describe_schedule()})")
+
+    if not set_guest_network_enabled(wanted):
+        # Leave the state file alone so the next tick retries.
+        return None
+
+    save_guest_state(wanted)
+
+    if DOWNTIME_NOTIFY and known != wanted:
+        try:
+            send_telegram_text(_downtime_message(wanted))
+        except Exception as e:
+            print(f"❌ Downtime notification failed: {e}")
+
+    return wanted
+
+
+def _downtime_message(enabled: bool) -> str:
+    if enabled:
+        return f"☀️ Guest Wi-Fi is back ON (downtime ended {DOWNTIME_END})."
+    return f"🌙 Guest Wi-Fi is OFF for downtime until {DOWNTIME_END}."
+
+
+# -----------------------------
+# Browser automation
+# -----------------------------
 
 
 def _accept_tls_interstitial(page) -> None:
@@ -151,10 +332,12 @@ def _accept_tls_interstitial(page) -> None:
         pass
 
 
-def run_browser_automation(new_password: str, new_ssid: Optional[str] = None) -> bool:
+def _guest_session(action: Callable[[object], None], label: str) -> bool:
+    """
+    Log into the router, open the Guest Network page and run `action(frame)`.
+    Returns True when the action completed without raising.
+    """
     admin_password = _require_env("ROUTER_PASSWORD", ROUTER_ADMIN_PASSWORD)
-    if new_ssid is None:
-        new_ssid = generate_network_name()
 
     browser = None
     context = None
@@ -207,11 +390,11 @@ def run_browser_automation(new_password: str, new_ssid: Optional[str] = None) ->
             page.locator(GUEST_MENU_SELECTOR).first.click(timeout=30000)
             page.wait_for_timeout(1500)
 
-            # Update guest network settings (inside iframe on Orbi)
+            # Guest network settings live inside an iframe on Orbi
             frame = page.frame_locator(GUEST_IFRAME_SELECTOR)
-            _update_guest_network(frame, new_password, new_ssid)
+            action(frame)
 
-            page.wait_for_timeout(60000)
+            page.wait_for_timeout(GUEST_APPLY_WAIT_MS)
 
             context.close()
             browser.close()
@@ -220,12 +403,14 @@ def run_browser_automation(new_password: str, new_ssid: Optional[str] = None) ->
     except Exception as e:
         try:
             if page is not None:
-                page.screenshot(path="fail.png", full_page=True)
-                print("🖼️ Saved fail.png")
+                slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+                screenshot_path = f"fail-{slug}.png"
+                page.screenshot(path=screenshot_path, full_page=True)
+                print(f"🖼️ Saved {screenshot_path}")
         except Exception:
             pass
 
-        print("❌ Error during password update:", e)
+        print(f"❌ Error during {label}:", e)
 
         try:
             if context is not None:
@@ -242,6 +427,24 @@ def run_browser_automation(new_password: str, new_ssid: Optional[str] = None) ->
         return False
 
 
+def run_browser_automation(new_password: str, new_ssid: Optional[str] = None) -> bool:
+    if new_ssid is None:
+        new_ssid = generate_network_name()
+
+    return _guest_session(
+        lambda frame: _update_guest_network(frame, new_password, new_ssid),
+        "password update",
+    )
+
+
+def set_guest_network_enabled(enabled: bool) -> bool:
+    """Turn the guest network on or off via the router UI."""
+    return _guest_session(
+        lambda frame: _set_guest_network_enabled(frame, enabled),
+        "guest network on" if enabled else "guest network off",
+    )
+
+
 def _update_guest_network(frame, new_password: str, new_ssid: str) -> None:
     ssid_locator = frame.locator(GUEST_SSID_SELECTOR)
     ssid_locator.wait_for(timeout=30000)
@@ -251,6 +454,46 @@ def _update_guest_network(frame, new_password: str, new_ssid: str) -> None:
     password_locator.wait_for(timeout=30000)
     _select_all_and_overtype(password_locator, new_password)
     frame.locator(SAVE_BUTTON_SELECTOR).click(timeout=120000)
+
+
+def _set_guest_network_enabled(frame, enabled: bool) -> None:
+    toggle = frame.locator(GUEST_ENABLE_SELECTOR)
+    toggle.wait_for(timeout=30000)
+
+    if _toggle_is_on(toggle) == enabled:
+        print(f"ℹ️ Guest network already {'on' if enabled else 'off'} — nothing to apply")
+        return
+
+    _set_toggle(toggle, enabled)
+    frame.locator(SAVE_BUTTON_SELECTOR).click(timeout=120000)
+
+
+def _toggle_is_on(locator) -> Optional[bool]:
+    """Best-effort read of a checkbox / switch. None when it can't be determined."""
+    try:
+        return locator.is_checked()
+    except Exception:
+        pass
+
+    try:
+        aria = locator.get_attribute("aria-checked")
+        if aria is not None:
+            return aria.strip().lower() == "true"
+    except Exception:
+        pass
+
+    return None
+
+
+def _set_toggle(locator, enabled: bool) -> None:
+    try:
+        if enabled:
+            locator.check(timeout=10000)
+        else:
+            locator.uncheck(timeout=10000)
+    except Exception:
+        # Non-standard switch widget: fall back to a plain click.
+        locator.click(timeout=10000)
 
 
 def _select_all_and_overtype(locator, value: str) -> None:
@@ -327,8 +570,14 @@ def check_for_reset_command() -> None:
     last_reset_time = 0.0
 
     print(f"📡 Watching Telegram for /reset ... (state: {LAST_UPDATE_ID_FILE}, chats: {allowed_chat_ids})")
+    print(f"🕒 Schedule: {describe_schedule()}")
 
     while True:
+        try:
+            apply_schedule()
+        except Exception as e:
+            print("❌ Downtime schedule error:", e)
+
         try:
             params = {"offset": last_update_id + 1, "timeout": 30}
             r = requests.get(base_url, params=params, timeout=35)
@@ -363,8 +612,27 @@ def check_for_reset_command() -> None:
             print("❌ Telegram polling error:", e)
 
 
+def _cli_set_guest(enabled: bool) -> None:
+    if set_guest_network_enabled(enabled):
+        save_guest_state(enabled)
+        print(f"✅ Guest network {'on' if enabled else 'off'}")
+    else:
+        print(f"❌ Failed to turn guest network {'on' if enabled else 'off'}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    if "--watch" in sys.argv:
+    args = set(sys.argv[1:])
+    if "--watch" in args:
         check_for_reset_command()
+    elif "--guest-off" in args:
+        _cli_set_guest(False)
+    elif "--guest-on" in args:
+        _cli_set_guest(True)
+    elif "--apply-schedule" in args:
+        if not DOWNTIME_ENABLED:
+            print("ℹ️ DOWNTIME_ENABLED is false — nothing to do")
+        else:
+            apply_schedule(force="--force" in args)
     else:
         run_once()
